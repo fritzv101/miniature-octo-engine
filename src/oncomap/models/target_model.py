@@ -92,7 +92,7 @@ class TargetBindingModel:
             self.models[key] = model
             self.training_counts[key] = len(sub)
             self.target_means[key] = float(y.mean())
-            self._train_fps[key] = _binary_fp(x, self.config.featurizer.fingerprint_bits)
+            self._train_fps[key] = _pack_fp(_binary_fp(x, self.config.featurizer.fingerprint_bits))
             if "target_name" in sub.columns:
                 self.target_names[key] = str(sub["target_name"].iloc[0])
         logger.info(
@@ -123,7 +123,10 @@ class TargetBindingModel:
         fps = _binary_fp(
             self.featurizer.featurize_many(smiles), self.config.featurizer.fingerprint_bits
         )
-        data = {t: _max_tanimoto(fps, train) for t, train in self._train_fps.items()}
+        data = {
+            t: _max_tanimoto(fps, _unpack_fp(train, fps.shape[1]))
+            for t, train in self._train_fps.items()
+        }
         return pd.DataFrame(data, index=pd.Index(smiles, name="smiles"))
 
     def predict_profile(self, smiles: str, *, top_k: int | None = None) -> pd.DataFrame:
@@ -162,6 +165,17 @@ class TargetBindingModel:
 
 def _binary_fp(features: np.ndarray, n_bits: int) -> np.ndarray:
     return (features[:, :n_bits] > 0).astype(np.float32)
+
+
+def _pack_fp(fp: np.ndarray) -> np.ndarray:
+    """Store training fingerprints as bits (32x smaller than float32)."""
+    return np.packbits(fp.astype(bool), axis=1)
+
+
+def _unpack_fp(stored: np.ndarray, n_bits: int) -> np.ndarray:
+    if stored.dtype == np.uint8:
+        return np.unpackbits(stored, axis=1, count=n_bits).astype(np.float32)
+    return stored  # models saved before packing
 
 
 def _max_tanimoto(query: np.ndarray, reference: np.ndarray) -> np.ndarray:
