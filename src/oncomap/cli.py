@@ -12,7 +12,7 @@ from typing import Any
 import pandas as pd
 
 from oncomap.data.loaders import load_cell_line_features, load_cell_lines, read_table
-from oncomap.data.schema import CHEMBL_SCHEMA, GDSC_SCHEMA, DatasetSchema
+from oncomap.data.schema import CHEMBL_SCHEMA, GDSC_SCHEMA, LINCS_DEPMAP_SCHEMA, DatasetSchema
 from oncomap.data.synthetic import write_synthetic_dataset
 from oncomap.pipeline import OncologyPipeline, PipelineConfig, load_training_data
 
@@ -20,6 +20,7 @@ SCHEMAS: dict[str, DatasetSchema] = {
     "default": DatasetSchema(),
     "chembl": CHEMBL_SCHEMA,
     "gdsc": GDSC_SCHEMA,
+    "lincs_depmap": LINCS_DEPMAP_SCHEMA,
 }
 
 
@@ -53,6 +54,16 @@ def main(argv: list[str] | None = None) -> int:
     p_pred.add_argument("--top-cell-lines", type=int, default=15)
     p_pred.add_argument("--json-out", default=None)
 
+    p_fetch = sub.add_parser(
+        "build-lincs-depmap",
+        help="fetch structures (LINCS), binding (ChEMBL) and cell-line data (DepMap)",
+    )
+    p_fetch.add_argument("--response", required=True, help="pert_id,cell_line,sensitivity_score")
+    p_fetch.add_argument("--outdir", default="data/lincs_depmap")
+    p_fetch.add_argument(
+        "--expression", help="local DepMap/CCLE expression CSV (default: download 24Q4)"
+    )
+
     p_eval = sub.add_parser("evaluate", help="print stored evaluation metrics of a model")
     p_eval.add_argument("--model", default="artifacts/pipeline.joblib")
 
@@ -61,9 +72,29 @@ def main(argv: list[str] | None = None) -> int:
         level=logging.INFO if args.verbose else logging.WARNING,
         format="%(levelname)s %(name)s: %(message)s",
     )
-    return {"demo": _demo, "train": _train, "predict": _predict, "evaluate": _evaluate}[
-        args.command
-    ](args)
+    commands = {
+        "demo": _demo,
+        "train": _train,
+        "predict": _predict,
+        "evaluate": _evaluate,
+        "build-lincs-depmap": _build_lincs_depmap,
+    }
+    return commands[args.command](args)
+
+
+def _build_lincs_depmap(args: argparse.Namespace) -> int:
+    from oncomap.data.sources import build_lincs_depmap_dataset
+
+    paths = build_lincs_depmap_dataset(args.response, args.outdir, expression_path=args.expression)
+    for name, path in paths.items():
+        print(f"{name}: {path}")
+    print(
+        "next: oncomap train --schema lincs_depmap "
+        f"--compounds {paths['compounds']} --binding {paths['binding']} "
+        f"--response {args.response} --cell-lines {paths['cell_lines']} "
+        f"--cell-features {paths['cell_features']}"
+    )
+    return 0
 
 
 def _demo(args: argparse.Namespace) -> int:
@@ -112,6 +143,7 @@ def _train(args: argparse.Namespace) -> int:
 
     config = PipelineConfig()
     config.target.min_samples_per_target = args.min_samples_per_target
+    config.response.higher_is_more_sensitive = schema.response.higher_is_more_sensitive
     pipeline = OncologyPipeline(config).fit(data, evaluate=not args.no_eval)
     path = pipeline.save(args.model_out)
     print(f"saved model to {path}")
@@ -169,7 +201,7 @@ def _print_report(report: dict[str, Any]) -> None:
         print("\nMost sensitive cell lines:")
         cols = [
             c
-            for c in ("cell_line_id", "cancer_type", "predicted_response", "delta_vs_baseline")
+            for c in ("cell_line_id", "cancer_type", "predicted_response", "sensitivity_gain")
             if c in report["cell_lines"][0]
         ]
         print(

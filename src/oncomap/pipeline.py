@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 import joblib
+import numpy as np
 import pandas as pd
 
 from oncomap.chem import descriptors, lipinski_violations, standardize_smiles
@@ -108,8 +109,14 @@ class OncologyPipeline:
         )
         if len(test_idx) == 0:
             return {}
-        probe = CellLineResponseModel(self.target_model, self.config.response).fit(
-            response.iloc[train_idx], data.compounds, data.cell_features, data.cell_lines
+        train = response.iloc[train_idx]
+        test_ids = set(response.iloc[test_idx]["compound_id"])
+        # Held-out compounds must be unseen by the binding model too, or their
+        # measured affinities leak into the response features.
+        binding = data.binding[~data.binding["compound_id"].isin(test_ids)]
+        target_model = TargetBindingModel(self.config.target).fit(binding)
+        probe = CellLineResponseModel(target_model, self.config.response).fit(
+            train, data.compounds, data.cell_features, data.cell_lines
         )
         test = response.iloc[test_idx].merge(
             data.compounds[["compound_id", "smiles"]], on="compound_id", how="inner"
@@ -117,10 +124,13 @@ class OncologyPipeline:
         test = test.assign(
             predicted=probe.predict(test["smiles"].tolist(), test["cell_line_id"].tolist())
         )
-        metrics: dict[str, Any] = dict(
-            regression_metrics(test["response"].to_numpy(), test["predicted"].to_numpy())
-        )
+        y = test["response"].to_numpy()
+        metrics: dict[str, Any] = dict(regression_metrics(y, test["predicted"].to_numpy()))
         metrics["split"] = "unseen_compound"
+        cell_mean = train.groupby("cell_line_id")["response"].mean()
+        baseline = test["cell_line_id"].map(cell_mean).fillna(train["response"].mean())
+        metrics["baseline_cell_line_mean"] = regression_metrics(y, baseline.to_numpy())
+        metrics["compound_level"] = _compound_level_metrics(test)
         metrics["per_cell_line"] = per_group_metrics(
             test, "cell_line_id", "response", "predicted"
         ).to_dict("records")
@@ -236,3 +246,20 @@ def load_training_data(
         TrainingData(compounds_clean, binding_clean, response_clean, cell_features, cell_lines),
         reports,
     )
+
+
+def _compound_level_metrics(test: pd.DataFrame) -> dict[str, float]:
+    """Does the model rank compounds by potency, and cell lines within a compound?"""
+    per_compound = test.groupby("compound_id")[["response", "predicted"]].mean()
+    within = [
+        g["response"].corr(g["predicted"], method="spearman")
+        for _, g in test.groupby("compound_id")
+        if len(g) >= 10 and g["response"].std() > 0 and g["predicted"].std() > 0
+    ]
+    return {
+        "n_compounds": float(len(per_compound)),
+        "mean_response_spearman": float(
+            per_compound["response"].corr(per_compound["predicted"], method="spearman")
+        ),
+        "within_compound_spearman_median": float(np.median(within)) if within else float("nan"),
+    }

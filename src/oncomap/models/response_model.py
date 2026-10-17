@@ -38,12 +38,17 @@ class ResponseModelConfig:
     max_iter: int = 400
     learning_rate: float = 0.06
     max_depth: int = 7
+    higher_is_more_sensitive: bool = False
     seed: int = 0
 
 
 @dataclass
 class CellLineResponseModel:
-    """Predicts a response value (lower = more sensitive) per compound/cell line."""
+    """Predicts a response value per compound/cell line.
+
+    Rankings respect ``config.higher_is_more_sensitive``: the most sensitive cell
+    line always comes first, whatever the response metric's direction.
+    """
 
     target_model: TargetBindingModel
     config: ResponseModelConfig = field(default_factory=ResponseModelConfig)
@@ -112,14 +117,19 @@ class CellLineResponseModel:
             self._cell_baseline if self._cell_baseline is not None else pd.Series(dtype=float)
         )
         out["cell_line_baseline"] = baseline.reindex(ids).to_numpy()
-        # Negative delta = more sensitive than that cell line's typical compound.
-        out["delta_vs_baseline"] = out["predicted_response"] - out["cell_line_baseline"]
+        # Positive sensitivity_gain = more sensitive than that cell line's typical compound.
+        delta = out["predicted_response"] - out["cell_line_baseline"]
+        out["sensitivity_gain"] = delta if self.config.higher_is_more_sensitive else -delta
         if self.cell_lines is not None:
             meta = self.cell_lines.reindex(ids)
             for col in ("cancer_type", "tissue"):
                 if col in meta.columns:
                     out[col] = meta[col].to_numpy()
-        return out.sort_values("predicted_response", ignore_index=True)
+        return out.sort_values(
+            "predicted_response",
+            ascending=not self.config.higher_is_more_sensitive,
+            ignore_index=True,
+        )
 
     def summarize_by_cancer_type(self, smiles: str, min_lines: int = 3) -> pd.DataFrame:
         """Aggregate per-cell-line predictions into a cancer-type view."""
@@ -129,12 +139,12 @@ class CellLineResponseModel:
         grouped = pred.groupby("cancer_type").agg(
             n_cell_lines=("cell_line_id", "size"),
             median_response=("predicted_response", "median"),
-            median_delta=("delta_vs_baseline", "median"),
-            best_cell_line=("cell_line_id", "first"),
-            best_response=("predicted_response", "min"),
+            median_sensitivity_gain=("sensitivity_gain", "median"),
+            most_sensitive_cell_line=("cell_line_id", "first"),
+            most_sensitive_response=("predicted_response", "first"),
         )
         grouped = grouped[grouped["n_cell_lines"] >= min_lines]
-        return grouped.sort_values("median_delta").reset_index()
+        return grouped.sort_values("median_sensitivity_gain", ascending=False).reset_index()
 
     @property
     def known_cell_lines(self) -> list[str]:

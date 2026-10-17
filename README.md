@@ -97,6 +97,41 @@ src/oncomap/
   models/response_model.py stage 2
 ```
 
+## Web API (for frontends)
+
+```bash
+pip install -e ".[api]"
+ONCOMAP_MODEL=model.joblib ONCOMAP_COMPOUNDS=compounds.csv uvicorn oncomap.api:app --port 8000
+# interactive docs: http://localhost:8000/docs
+```
+
+| Method | Path | Body / query | Returns |
+|---|---|---|---|
+| GET | `/health` | | `{"status": "ok", "has_response_model": true}` |
+| GET | `/model` | | target/cell-line counts and evaluation metrics |
+| POST | `/predict` | `{"smiles": "...", "top_targets": 10, "top_cell_lines": 15}` | `canonical_smiles`, `descriptors`, `targets`, `cell_lines`, `cancer_types` |
+| POST | `/predict/batch` | `{"smiles": ["...", "..."]}` | list of reports; invalid structures get `error` |
+| GET | `/compounds?q=imatinib` | | known compounds (id, name, SMILES, MOA) |
+
+Invalid SMILES return HTTP 422. CORS origins are set with `ONCOMAP_CORS_ORIGINS`
+(comma-separated, default `*`). A `Dockerfile` is included: mount a trained model at
+`/models/model.joblib`.
+
+## LINCS / PharmacoDB / DepMap data
+
+For a response file with `pert_id,cell_line,sensitivity_score` (PharmacoDB DSS3
+scores for LINCS compounds on DepMap ACH cell lines):
+
+```bash
+pip install -e ".[fetch]"
+oncomap build-lincs-depmap --response L1000_..._dss3.csv --outdir data/lincs_depmap \
+    [--expression OmicsExpressionTPMLogp1HumanProteinCodingGenes.csv]
+```
+
+This fetches SMILES/MOA from LINCS `compoundinfo_beta.txt`, human binding activities
+(pChEMBL) from the ChEMBL API, and lineage, hotspot mutations and expression from
+DepMap on figshare, then prints the matching `oncomap train --schema lincs_depmap` command.
+
 ## Caveats
 
 * The synthetic dataset is for plumbing and tests, not for biology. Metrics on it
@@ -104,5 +139,7 @@ src/oncomap/
 * Only targets with enough measurements are modelled (`--min-samples-per-target`);
   skipped targets are recorded on the model.
 * Response values are assumed to follow the ln IC50 convention (lower = more
-  sensitive). If yours are AUC or percent viability, keep the direction in mind
-  when reading `delta_vs_baseline`.
+  sensitive) unless `ResponseColumns.higher_is_more_sensitive` is set, as it is for
+  DSS scores in the `lincs_depmap` schema. Rankings always put the most sensitive
+  cell line first; `sensitivity_gain` > 0 means more sensitive than that cell
+  line's typical compound.

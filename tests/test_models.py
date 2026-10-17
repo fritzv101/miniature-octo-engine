@@ -80,7 +80,7 @@ def test_response_model_rankings_and_cancer_type_summary(dataset, fitted_target_
     assert "cancer_type" in ranked.columns
 
     summary = model.summarize_by_cancer_type(smiles, min_lines=1)
-    assert summary["median_delta"].is_monotonic_increasing
+    assert summary["median_sensitivity_gain"].is_monotonic_decreasing
     assert summary["n_cell_lines"].sum() == len(ranked)
 
 
@@ -96,3 +96,13 @@ def test_response_model_rejects_mismatched_inputs(dataset, fitted_target_model):
     model = CellLineResponseModel(fitted_target_model).fit(response, dataset.compounds)
     with pytest.raises(ValueError, match="same length"):
         model.predict(["CCO"], ["a", "b"])
+
+
+def test_higher_is_more_sensitive_flips_rankings(dataset, fitted_target_model):
+    response = dataset.response.rename(columns={"ln_ic50": "response"})
+    flipped = response.assign(response=-response["response"])
+    model = CellLineResponseModel(
+        fitted_target_model, ResponseModelConfig(higher_is_more_sensitive=True)
+    ).fit(flipped, dataset.compounds)
+    ranked = model.predict_cell_lines(dataset.compounds["smiles"].iloc[1])
+    assert ranked["predicted_response"].is_monotonic_decreasing

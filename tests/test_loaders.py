@@ -9,7 +9,7 @@ from oncomap.data.loaders import (
     load_response,
     nanomolar_to_pactivity,
 )
-from oncomap.data.schema import BindingColumns, SchemaError
+from oncomap.data.schema import BindingColumns, ResponseColumns, SchemaError
 
 
 def test_load_compounds_cleans_and_dedupes():
@@ -95,3 +95,12 @@ def test_cell_line_features_drop_sparse_and_constant_columns():
     out = load_cell_line_features(frame, prefix="expr_")
     assert list(out.columns) == ["expr_good"]
     assert out.index.name == "cell_line_id"
+
+
+def test_load_response_log1p_transform():
+    frame = pd.DataFrame({"pert_id": ["A", "B"], "cell_line": ["C1", "C1"], "dss": [0.0, np.e - 1]})
+    cols = ResponseColumns(
+        compound_id="pert_id", cell_line_id="cell_line", value="dss", auc=None, transform="log1p"
+    )
+    out, _ = load_response(frame, cols)
+    assert out.set_index("compound_id")["response"].to_dict() == pytest.approx({"A": 0.0, "B": 1.0})

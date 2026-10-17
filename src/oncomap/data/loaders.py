@@ -216,7 +216,8 @@ def load_response(
 ) -> tuple[pd.DataFrame, LoadReport]:
     """Normalize a drug-response table to one median value per (compound, cell line).
 
-    Lower ``response`` means more sensitive (ln IC50 convention).
+    The direction of ``response`` is whatever the source uses; see
+    ``ResponseColumns.higher_is_more_sensitive``.
     """
     cols = columns or ResponseColumns()
     require_columns(frame, [cols.compound_id, cols.cell_line_id, cols.value], what="response")
@@ -234,6 +235,12 @@ def load_response(
     bad = ~np.isfinite(df["response"])
     report.drop("missing_value", bad.sum())
     df = df[~bad]
+    if cols.transform == "log1p":
+        negative = df["response"] < 0
+        report.drop("negative_for_log1p", negative.sum())
+        df = df[~negative].assign(response=lambda d: np.log1p(d["response"]))
+    elif cols.transform is not None:
+        raise ValueError(f"unknown response transform: {cols.transform!r}")
     agg_cols = {"response": "median", **({"auc": "median"} if auc_col else {})}
     agg = df.groupby(["compound_id", "cell_line_id"], as_index=False).agg(agg_cols)
     report.drop("merged_replicates", len(df) - len(agg))
