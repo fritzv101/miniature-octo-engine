@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "oncomap"
+version = "0.1.0"
+description = "From a compound to its targets, cell lines and cancer types"
+requires-python = ">=3.10"
+dependencies = [
+    "rdkit>=2023.9",
+    "numpy>=1.24",
+    "pandas>=2.0",
+    "scikit-learn>=1.4",
+    "joblib>=1.3",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.5", "mypy>=1.8", "httpx>=0.27"]
+fetch = ["requests>=2.31", "openpyxl>=3.1"]
+api = ["fastapi>=0.110", "uvicorn[standard]>=0.29"]
+
+[project.scripts]
+oncomap = "oncomap.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true
