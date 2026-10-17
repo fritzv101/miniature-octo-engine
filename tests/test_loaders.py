@@ -70,6 +70,23 @@ def test_load_binding_restricts_to_known_compounds():
     assert report.dropped["unknown_compound"] == 1
 
 
+def test_load_binding_keeps_extra_molecules_with_own_smiles():
+    compounds = pd.DataFrame({"compound_id": ["A"], "smiles": ["CCO"], "name": ["a"]})
+    frame = pd.DataFrame(
+        {
+            "compound_id": ["A", "CHEMBL1", "CHEMBL2"],
+            "smiles": ["c1ccccc1", "CCN", "not-a-smiles"],
+            "target_id": ["T1", "T1", "T1"],
+            "standard_type": ["pIC50"] * 3,
+            "standard_value": [7.0, 8.0, 6.0],
+        }
+    )
+    out, report = load_binding(frame, BindingColumns(), compounds=compounds)
+    smiles = dict(zip(out["compound_id"], out["smiles"], strict=True))
+    assert smiles == {"A": "CCO", "CHEMBL1": "CCN"}
+    assert report.dropped["unknown_compound"] == 1
+
+
 def test_load_response_medians_replicates():
     frame = pd.DataFrame(
         {
@@ -104,3 +121,13 @@ def test_load_response_log1p_transform():
     )
     out, _ = load_response(frame, cols)
     assert out.set_index("compound_id")["response"].to_dict() == pytest.approx({"A": 0.0, "B": 1.0})
+
+
+def test_read_target_genes(tmp_path):
+    from oncomap.cli import read_target_genes
+
+    path = tmp_path / "tg.csv"
+    pd.DataFrame(
+        {"target_chembl_id": ["T1", "T2", "T3"], "gene_symbols": ["EGFR", "PIK3CA;PIK3R1", None]}
+    ).to_csv(path, index=False)
+    assert read_target_genes(str(path)) == {"T1": ["EGFR"], "T2": ["PIK3CA", "PIK3R1"]}

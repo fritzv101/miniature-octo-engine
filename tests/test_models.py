@@ -106,3 +106,17 @@ def test_higher_is_more_sensitive_flips_rankings(dataset, fitted_target_model):
     ).fit(flipped, dataset.compounds)
     ranked = model.predict_cell_lines(dataset.compounds["smiles"].iloc[1])
     assert ranked["predicted_response"].is_monotonic_decreasing
+
+
+def test_target_gene_interactions_are_added(dataset, fitted_target_model):
+    response = dataset.response.rename(columns={"ln_ic50": "response"})
+    targets = fitted_target_model.targets
+    config = ResponseModelConfig(n_omics_components=8, target_genes={t: [t] for t in targets})
+    model = CellLineResponseModel(fitted_target_model, config).fit(
+        response, dataset.compounds, dataset.cell_features, dataset.cell_lines
+    )
+    names = model.feature_names
+    assert f"occ_{targets[0]}*expr_{targets[0]}" in names
+    assert f"occ_{targets[0]}*mut_{targets[0]}" in names
+    pred = model.predict([dataset.compounds["smiles"].iloc[0]] * 3, model.known_cell_lines[:3])
+    assert np.isfinite(pred).all()

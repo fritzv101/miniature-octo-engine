@@ -187,9 +187,18 @@ def load_binding(
 
     smiles_col = optional_column(frame, cols.smiles)
     if compounds is not None:
+        # Known compounds take the compound table's structure; other rows (e.g. extra
+        # ChEMBL molecules used only to train the binding model) need their own SMILES.
+        own = df.pop(smiles_col) if smiles_col else None
         df = df.drop(columns=[c for c in ("smiles",) if c in df.columns])
         before = len(df)
-        df = df.merge(compounds[["compound_id", "smiles"]], on="compound_id", how="inner")
+        df = df.merge(compounds[["compound_id", "smiles"]], on="compound_id", how="left")
+        if own is not None:
+            extra = df["smiles"].isna().to_numpy()
+            df.loc[extra, "smiles"] = [
+                try_standardize_smiles(str(s)) for s in own.to_numpy()[extra]
+            ]
+        df = df[df["smiles"].notna()]
         report.drop("unknown_compound", before - len(df))
     elif smiles_col:
         df["smiles"] = df[smiles_col].astype(str).map(try_standardize_smiles)

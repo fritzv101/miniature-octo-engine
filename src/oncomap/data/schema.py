@@ -81,7 +81,7 @@ LINCS_DEPMAP_SCHEMA = DatasetSchema(
     compounds=CompoundColumns(compound_id="pert_id", smiles="smiles", name="cmap_name"),
     binding=BindingColumns(
         compound_id="pert_id",
-        smiles=None,
+        smiles="smiles",
         target_id="target_chembl_id",
         value="standard_value",
         units="standard_units",

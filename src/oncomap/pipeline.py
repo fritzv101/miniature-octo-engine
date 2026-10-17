@@ -209,10 +209,16 @@ class OncologyPipeline:
     def metrics_summary(self) -> dict[str, Any]:
         """Headline numbers only, safe to print or dump as JSON."""
         keep = ("n", "rmse", "mae", "r2", "pearson", "spearman", "split")
-        return {
-            stage: {k: v for k, v in values.items() if k in keep}
-            for stage, values in self.metrics.items()
-        }
+        nested = ("in_domain", "baseline_cell_line_mean", "compound_level")
+        summary: dict[str, Any] = {}
+        for stage, values in self.metrics.items():
+            summary[stage] = {k: v for k, v in values.items() if k in keep}
+            for key in nested:
+                if isinstance(values.get(key), dict):
+                    summary[stage][key] = {
+                        k: v for k, v in values[key].items() if k in keep or k not in nested
+                    }
+        return summary
 
     def write_metrics(self, path: str | Path) -> Path:
         path = Path(path)

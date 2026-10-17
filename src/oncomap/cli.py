@@ -46,6 +46,13 @@ def main(argv: list[str] | None = None) -> int:
     p_train.add_argument("--metrics-out", default=None)
     p_train.add_argument("--min-samples-per-target", type=int, default=25)
     p_train.add_argument("--no-eval", action="store_true")
+    p_train.add_argument(
+        "--target-genes",
+        help="CSV of target_id,gene_symbols (';'-separated) for target x omics features",
+    )
+    p_train.add_argument("--response-max-depth", type=int, default=None)
+    p_train.add_argument("--response-max-iter", type=int, default=None)
+    p_train.add_argument("--response-min-samples-leaf", type=int, default=None)
 
     p_pred = sub.add_parser("predict", help="report targets and cell lines for a compound")
     p_pred.add_argument("--model", default="artifacts/pipeline.joblib")
@@ -144,6 +151,15 @@ def _train(args: argparse.Namespace) -> int:
     config = PipelineConfig()
     config.target.min_samples_per_target = args.min_samples_per_target
     config.response.higher_is_more_sensitive = schema.response.higher_is_more_sensitive
+    if getattr(args, "target_genes", None):
+        config.response.target_genes = read_target_genes(args.target_genes)
+    for arg, attr in (
+        ("response_max_depth", "max_depth"),
+        ("response_max_iter", "max_iter"),
+        ("response_min_samples_leaf", "min_samples_leaf"),
+    ):
+        if getattr(args, arg, None) is not None:
+            setattr(config.response, attr, getattr(args, arg))
     pipeline = OncologyPipeline(config).fit(data, evaluate=not args.no_eval)
     path = pipeline.save(args.model_out)
     print(f"saved model to {path}")
@@ -151,6 +167,15 @@ def _train(args: argparse.Namespace) -> int:
     if args.metrics_out:
         pipeline.write_metrics(args.metrics_out)
     return 0
+
+
+def read_target_genes(path: str) -> dict[str, list[str]]:
+    frame = read_table(path).dropna(subset=["gene_symbols"])
+    id_col = "target_id" if "target_id" in frame.columns else "target_chembl_id"
+    return {
+        str(row[id_col]): [g for g in str(row["gene_symbols"]).split(";") if g]
+        for _, row in frame.iterrows()
+    }
 
 
 def _read_features(path: str | None) -> pd.DataFrame | None:

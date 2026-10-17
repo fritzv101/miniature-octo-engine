@@ -132,6 +132,19 @@ This fetches SMILES/MOA from LINCS `compoundinfo_beta.txt`, human binding activi
 (pChEMBL) from the ChEMBL API, and lineage, hotspot mutations and expression from
 DepMap on figshare, then prints the matching `oncomap train --schema lincs_depmap` command.
 
+Binding tables may carry a `smiles` column: rows for compounds outside the compound
+table (e.g. extra ChEMBL molecules for the same targets) are then kept and used to
+train the binding model only. For bulk ChEMBL extraction restore the PostgreSQL dump
+(`pg_restore --no-owner -t activities -t assays -t target_dictionary
+-t molecule_dictionary -t compound_structures ...`) rather than paging the API.
+
+Mechanistic response features: `--target-genes target_genes.csv` (columns
+`target_chembl_id,gene_symbols`, genes `;`-separated) adds "occupancy of target x
+expression / hotspot mutation of its gene" features. `--response-max-depth`,
+`--response-max-iter` and `--response-min-samples-leaf` tune the response model; a
+shallow, heavily regularized model (3 / 150 / 2000) generalizes better to unseen
+compounds on the DSS3 data than the default.
+
 ## Caveats
 
 * The synthetic dataset is for plumbing and tests, not for biology. Metrics on it

@@ -8,6 +8,10 @@ The feature vector for a (compound, cell line) pair is deliberately mechanistic:
 * the cell line's mean response across training compounds (how easy it is to
   kill at all) -- computed on training rows only, so it does not leak labels.
 
+* optionally, target x cell-line interactions: occupancy of each target times the
+  cell line's expression (z-scored) and hotspot-mutation status of that target's
+  gene(s), e.g. "inhibits EGFR" x "EGFR is highly expressed here".
+
 A gradient-boosted tree then learns the interactions (which omics context makes
 engagement of which target lethal).
 """
@@ -38,7 +42,13 @@ class ResponseModelConfig:
     max_iter: int = 400
     learning_rate: float = 0.06
     max_depth: int = 7
+    min_samples_leaf: int = 20
+    l2_regularization: float = 1.0
     higher_is_more_sensitive: bool = False
+    # target_id -> gene symbols; enables occupancy x expression/mutation features
+    target_genes: dict[str, list[str]] = field(default_factory=dict)
+    expression_prefix: str = "expr_"
+    mutation_prefix: str = "mut_"
     seed: int = 0
 
 
@@ -82,6 +92,7 @@ class CellLineResponseModel:
             raise ValueError("no response rows matched the compound table on compound_id")
         self.cell_lines = cell_lines
         self._fit_omics(cell_features, data["cell_line_id"].unique())
+        self._fit_interactions(cell_features, data["cell_line_id"].unique())
         self._cell_baseline = data.groupby("cell_line_id")["response"].mean()
         self._global_baseline = float(data["response"].mean())
 
@@ -91,7 +102,8 @@ class CellLineResponseModel:
             max_depth=self.config.max_depth,
             learning_rate=self.config.learning_rate,
             max_iter=self.config.max_iter,
-            l2_regularization=1.0,
+            min_samples_leaf=self.config.min_samples_leaf,
+            l2_regularization=self.config.l2_regularization,
             random_state=self.config.seed,
         ).fit(x, y)
         logger.info("fitted response model on %d pairs, %d features", len(y), x.shape[1])
@@ -176,6 +188,32 @@ class CellLineResponseModel:
             columns=[f"omics_{i}" for i in range(n_components)],
         )
 
+    def _fit_interactions(self, cell_features: pd.DataFrame | None, cell_ids: np.ndarray) -> None:
+        """Pick (target, cell feature) pairs and z-score expression on training lines."""
+        self._interactions: list[tuple[str, str]] = []
+        self._interaction_values: pd.DataFrame | None = None
+        if cell_features is None or not self.config.target_genes:
+            return
+        trained = set(self.target_model.targets)
+        cols = set(cell_features.columns)
+        for target, genes in self.config.target_genes.items():
+            if target not in trained:
+                continue
+            for gene in genes:
+                for prefix in (self.config.expression_prefix, self.config.mutation_prefix):
+                    if prefix + gene in cols:
+                        self._interactions.append((target, prefix + gene))
+        if not self._interactions:
+            return
+        used = sorted({c for _, c in self._interactions})
+        values = cell_features[used].astype(float)
+        train_rows = values.reindex(sorted(set(cell_ids) & set(values.index)))
+        expr = [c for c in used if c.startswith(self.config.expression_prefix)]
+        mean, std = train_rows[expr].mean(), train_rows[expr].std().replace(0, 1)
+        values[expr] = (values[expr] - mean) / std
+        self._interaction_values = values.fillna(0.0)
+        logger.info("using %d target x cell-line interaction features", len(self._interactions))
+
     def _build_features(self, smiles: list[str], cell_line_ids: list[str]) -> np.ndarray:
         unique = list(dict.fromkeys(smiles))
         profile = self.target_model.predict_matrix(unique)
@@ -199,6 +237,18 @@ class CellLineResponseModel:
             omics = self._omics.reindex(cell_line_ids)
             blocks.append(np.nan_to_num(omics.to_numpy(dtype=float)))
             names.extend(self._omics.columns)
+
+        interactions = getattr(self, "_interactions", [])
+        if interactions and self._interaction_values is not None:
+            cell_vals = self._interaction_values.reindex(cell_line_ids).fillna(0.0)
+            occ_rows = blocks[0]
+            col_of = {t: i for i, t in enumerate(profile.columns)}
+            blocks.append(
+                np.column_stack(
+                    [occ_rows[:, col_of[t]] * cell_vals[c].to_numpy() for t, c in interactions]
+                )
+            )
+            names.extend(f"occ_{t}*{c}" for t, c in interactions)
 
         baseline = (
             self._cell_baseline.reindex(cell_line_ids).fillna(self._global_baseline).to_numpy()
