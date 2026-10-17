@@ -117,6 +117,20 @@ Invalid SMILES return HTTP 422. CORS origins are set with `ONCOMAP_CORS_ORIGINS`
 (comma-separated, default `*`). A `Dockerfile` is included: mount a trained model at
 `/models/model.joblib`.
 
+Set `ONCOMAP_API_KEY` to require a key on every endpoint except `/health`; clients
+send it as `X-API-Key: <key>` or `Authorization: Bearer <key>`.
+
+Deploy to a Hugging Face Docker Space (free CPU tier, 16 GB RAM):
+
+```bash
+pip install huggingface_hub
+HF_TOKEN=hf_... python deploy/huggingface/deploy.py --space <user>/oncomap \
+    --model model.joblib --compounds compounds.csv --api-key <key>
+```
+
+The key is stored as the Space secret `ONCOMAP_API_KEY`; the script prints the
+public `https://<user>-oncomap.hf.space` URL.
+
 ## LINCS / PharmacoDB / DepMap data
 
 For a response file with `pert_id,cell_line,sensitivity_score` (PharmacoDB DSS3

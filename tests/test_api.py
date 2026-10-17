@@ -68,3 +68,14 @@ def test_model_info_and_compound_search(client, dataset):
     first = dataset.compounds["compound_id"].iloc[0]
     hits = client.get("/compounds", params={"q": first}).json()
     assert hits and hits[0]["compound_id"] == first
+
+
+def test_api_key_required_when_configured(client, monkeypatch):
+    monkeypatch.setenv("ONCOMAP_API_KEY", "s3cret")
+    body = {"smiles": "CCO", "top_targets": 3, "top_cell_lines": 3}
+    assert client.get("/health").status_code == 200
+    assert client.post("/predict", json=body).status_code == 401
+    assert client.post("/predict", json=body, headers={"X-API-Key": "nope"}).status_code == 401
+    assert client.post("/predict", json=body, headers={"X-API-Key": "s3cret"}).status_code == 200
+    bearer = {"Authorization": "Bearer s3cret"}
+    assert client.get("/model", headers=bearer).status_code == 200
