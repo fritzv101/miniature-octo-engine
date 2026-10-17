@@ -195,9 +195,9 @@ def load_binding(
         df = df.merge(compounds[["compound_id", "smiles"]], on="compound_id", how="left")
         if own is not None:
             extra = df["smiles"].isna().to_numpy()
-            df.loc[extra, "smiles"] = [
-                try_standardize_smiles(str(s)) for s in own.to_numpy()[extra]
-            ]
+            raw = own.to_numpy()[extra].astype(str)
+            canonical = {s: try_standardize_smiles(s) for s in set(raw)}
+            df.loc[extra, "smiles"] = [canonical[s] for s in raw]
         df = df[df["smiles"].notna()]
         report.drop("unknown_compound", before - len(df))
     elif smiles_col:
